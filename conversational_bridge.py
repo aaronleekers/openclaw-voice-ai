@@ -72,7 +72,9 @@ def voice():
         greeting = "Hey Terrence! Gerald here." if is_terrence else "Hi! I'm Gerald, your Mac AI assistant."
         resp.say(greeting, voice='Polly.Joanna-Neural')
     
-    gather = Gather(input='speech', action='/voice', timeout=3, speech_timeout='auto')
+    # Use absolute URL for Railway
+    action_url = request.url_root + 'voice'
+    gather = Gather(input='speech', action=action_url, timeout=3, speech_timeout='auto')
     resp.append(gather)
     resp.say("Talk later!", voice='Polly.Joanna-Neural')
     
