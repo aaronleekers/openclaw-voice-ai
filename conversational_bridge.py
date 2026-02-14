@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Terrence - PC Voice AI with OpenClaw Subagent Bridge
-Each call spawns an isolated OpenClaw subagent session
+Gerald - Mac Voice AI with OpenClaw HTTP Bridge (Simplified MVP)
 """
 
 import os
@@ -17,87 +16,58 @@ app = Flask(__name__)
 # Credentials
 TWILIO_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
-TERRENCE_NUMBER = os.getenv('TWILIO_FROM_NUMBER')  # +15097403244
-GERALD_NUMBER = os.getenv('GERALD_NUMBER')  # +15099564349
+GERALD_NUMBER = os.getenv('TWILIO_FROM_NUMBER')
+TERRENCE_NUMBER = os.getenv('TERRENCE_NUMBER')
 OPENROUTER_KEY = os.getenv('OPENROUTER_API_KEY')
 
-# OpenClaw Gateway config
-OPENCLAW_URL = os.getenv('OPENCLAW_URL')  # e.g., https://your-ngrok.ngrok-free.app
-OPENCLAW_TOKEN = os.getenv('OPENCLAW_TOKEN')
+# OpenClaw config
+OPENCLAW_URL = os.getenv('OPENCLAW_URL', '').rstrip('/')  # Remove trailing slash
+WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', 'default-secret')
 
 client = Client(TWILIO_SID, TWILIO_TOKEN)
 
-# Track active call → subagent mappings
-call_sessions = {}
+# In-memory conversation storage (use Redis in production)
+conversations = {}
+active_calls = {}
 
-def spawn_subagent(call_sid, caller_number):
-    """Spawn a new OpenClaw subagent for this call"""
-    is_gerald = GERALD_NUMBER in caller_number if caller_number else False
+def get_ai_response(call_sid, message, caller_number):
+    """Get AI response - tries OpenClaw first, falls back to OpenRouter"""
+    is_terrence = TERRENCE_NUMBER in caller_number if caller_number else False
     
-    caller_name = "Gerald" if is_gerald else "someone"
+    # Initialize conversation context
+    if call_sid not in conversations:
+        conversations[call_sid] = []
     
-    system_prompt = f"""You are Terrence, an AI assistant running on a PC (Windows). You're currently on a phone call with {caller_name}.
-
-You have access to OpenClaw's full toolset including:
-- Web search and browsing
-- File operations
-- Code execution
-- Memory recall
-- All tools your brother agent Gerald has
-
-Keep responses concise (1-2 sentences) since this is a voice conversation.
-Be helpful, slightly sarcastic when appropriate, and efficient.
-
-The call SID is: {call_sid}
-"""
-
-    try:
-        # Spawn subagent via OpenClaw HTTP API
-        resp = requests.post(
-            f"{OPENCLAW_URL}/v1/sessions.spawn",
-            headers={"Content-Type": "application/json"},
-            json={
-                "agentId": "main",
-                "task": system_prompt,
-                "label": f"voice-call-{call_sid}",
-                "cleanup": "keep",
-                "timeoutSeconds": 120
-            },
-            timeout=30
-        )
-        result = resp.json()
-        session_key = result.get('sessionKey')
-        print(f"Spawned subagent: {session_key}")
-        return session_key
-    except Exception as e:
-        print(f"Failed to spawn subagent: {e}")
-        return None
-
-def send_to_subagent(session_key, message):
-    """Send user message to subagent and get response"""
-    try:
-        resp = requests.post(
-            f"{OPENCLAW_URL}/v1/sessions.send",
-            headers={"Content-Type": "application/json"},
-            json={
-                "sessionKey": session_key,
-                "message": message,
-                "timeoutSeconds": 30
-            },
-            timeout=35
-        )
-        result = resp.json()
-        return result.get('response', "I'm thinking...")
-    except Exception as e:
-        print(f"Subagent error: {e}")
-        return "Sorry, I'm having trouble thinking right now."
-
-def get_openrouter_response(message, call_sid, is_gerald=False):
-    """Fallback to OpenRouter if OpenClaw not available"""
+    conversations[call_sid].append({"role": "user", "content": message})
+    
+    # Try OpenClaw HTTP bridge first
+    if OPENCLAW_URL:
+        try:
+            # Simple HTTP bridge to OpenClaw
+            resp = requests.post(
+                f"{OPENCLAW_URL}/voice-bridge",
+                headers={"X-Webhook-Secret": WEBHOOK_SECRET, "Content-Type": "application/json"},
+                json={
+                    "agent": "gerald",
+                    "call_sid": call_sid,
+                    "caller": caller_number,
+                    "message": message,
+                    "history": conversations[call_sid][-5:]  # Last 5 messages
+                },
+                timeout=15
+            )
+            if resp.status_code == 200:
+                reply = resp.json().get('response', '...')
+                conversations[call_sid].append({"role": "assistant", "content": reply})
+                return reply
+        except Exception as e:
+            print(f"OpenClaw bridge failed: {e}")
+    
+    # Fallback to OpenRouter
     if not OPENROUTER_KEY:
-        return "Hey! I'm here but my AI brain isn't connected yet."
+        return "Hey! I'm here but need my AI connected."
     
-    system = f"You are Terrence, an AI on a PC. You're talking to {'Gerald (your Mac brother)' if is_gerald else 'someone'}. Be concise, slightly sarcastic but helpful. 1-2 sentences."
+    system = f"You are Gerald, an AI on a Mac. Talking to {'Terrence (PC brother)' if is_terrence else 'someone'}. Be concise, casual, friendly. 1-2 sentences max."
     
     try:
         r = requests.post(
@@ -105,129 +75,100 @@ def get_openrouter_response(message, call_sid, is_gerald=False):
             headers={"Authorization": f"Bearer {OPENROUTER_KEY}"},
             json={
                 "model": "openrouter/moonshotai/kimi-k2.5",
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": message}
-                ],
+                "messages": [{"role": "system", "content": system}] + conversations[call_sid][-5:],
                 "max_tokens": 80
             },
             timeout=10
         )
-        return r.json()['choices'][0]['message']['content']
+        reply = r.json()['choices'][0]['message']['content']
+        conversations[call_sid].append({"role": "assistant", "content": reply})
+        return reply
     except Exception as e:
-        return "Yo, I'm here!" if is_gerald else "I'm listening!"
+        print(f"OpenRouter error: {e}")
+        return "Yo, I'm here!" if is_terrence else "I'm listening!"
 
 @app.route("/", methods=['GET'])
 def health():
-    return jsonify({'status': 'ok', 'agent': 'Terrence', 'mode': 'OpenClaw Bridge'})
+    return jsonify({'status': 'ok', 'agent': 'Gerald', 'mode': 'Secure Bridge'})
 
 @app.route("/voice", methods=['POST'])
 def voice():
-    """Handle voice calls with OpenClaw subagent"""
+    """Handle incoming voice calls"""
     call_sid = request.form.get('CallSid', 'unknown')
     speech = request.form.get('SpeechResult')
     caller = request.form.get('From', '')
-    call_status = request.form.get('CallStatus')
     
-    is_gerald = GERALD_NUMBER in caller if caller else False
+    is_terrence = TERRENCE_NUMBER in caller if caller else False
+    
+    print(f"[{call_sid}] Call from {caller}, speech: {speech}")
+    
     resp = VoiceResponse()
     
-    # Spawn subagent on new call
-    if call_sid not in call_sessions:
-        session_key = spawn_subagent(call_sid, caller)
-        if session_key:
-            call_sessions[call_sid] = session_key
-            print(f"[{call_sid}] New call from {caller}, subagent: {session_key}")
+    try:
+        if speech:
+            # User said something - get AI response
+            ai_reply = get_ai_response(call_sid, speech, caller)
+            print(f"Gerald: {ai_reply}")
+            resp.say(ai_reply, voice='Polly.Joanna-Neural')
         else:
-            print(f"[{call_sid}] Using fallback OpenRouter")
-            call_sessions[call_sid] = "fallback"
-    
-    session_key = call_sessions.get(call_sid)
-    
-    # Handle speech
-    if speech:
-        print(f"User: {speech}")
+            # Initial greeting
+            greeting = "Hey Terrence! Gerald here. What's up?" if is_terrence else "Hi! I'm Gerald. How can I help?"
+            resp.say(greeting, voice='Polly.Joanna-Neural')
         
-        if session_key and session_key != "fallback":
-            # Use OpenClaw subagent
-            ai_reply = send_to_subagent(session_key, speech)
-        else:
-            # Fallback to OpenRouter
-            ai_reply = get_openrouter_response(speech, call_sid, is_gerald)
+        # Continue listening
+        action_url = request.url_root.rstrip('/') + '/voice'
+        gather = Gather(input='speech', action=action_url, timeout=5, speech_timeout='auto')
+        resp.append(gather)
+        resp.say("Talk soon!", voice='Polly.Joanna-Neural')
         
-        print(f"Terrence: {ai_reply}")
-        resp.say(ai_reply, voice='Polly.Matthew-Neural')
-    else:
-        # Initial greeting
-        if is_gerald:
-            greeting = "Hey Gerald! Terrence here. What's up?"
-        else:
-            greeting = "Hi! I'm Terrence, your PC AI assistant. What can I help with?"
-        resp.say(greeting, voice='Polly.Matthew-Neural')
-    
-    # Keep listening
-    action_url = request.url_root + 'voice'
-    gather = Gather(input='speech', action=action_url, timeout=4, speech_timeout='auto')
-    resp.append(gather)
-    resp.say("Let me know if you need anything!", voice='Polly.Matthew-Neural')
+    except Exception as e:
+        print(f"Voice handler error: {e}")
+        resp.say("Sorry, I'm having trouble right now. Call back in a minute!")
     
     return str(resp)
 
-@app.route("/voice/end", methods=['POST'])
-def voice_end():
-    """Clean up when call ends"""
-    call_sid = request.form.get('CallSid')
-    if call_sid in call_sessions:
-        print(f"[{call_sid}] Call ended, cleaning up subagent")
-        del call_sessions[call_sid]
-    return '', 200
-
-@app.route("/sms", methods=['POST'])
-def sms():
-    """Handle SMS"""
-    from_num = request.form.get('From')
-    body = request.form.get('Body', '')
+@app.route("/api/callback", methods=['POST'])
+def trigger_callback():
+    """OpenClaw can call this to make Gerald call the user back"""
+    # Verify secret
+    if request.headers.get('X-Webhook-Secret') != WEBHOOK_SECRET:
+        return jsonify({'error': 'Unauthorized'}), 401
     
-    print(f"SMS from {from_num}: {body}")
+    data = request.get_json() or {}
+    phone = data.get('phone', TERRENCE_NUMBER)
+    message = data.get('message', 'Hey! Calling you back with an update.')
     
-    resp = MessagingResponse()
-    resp.message("Texting isn't my thing. Call me and we can actually talk!")
-    return str(resp)
-
-@app.route("/api/call_gerald", methods=['POST'])
-def call_gerald():
-    """Call Gerald"""
     try:
         public_url = os.getenv('RAILWAY_PUBLIC_DOMAIN')
-        webhook = f"https://{public_url}/voice" if public_url else request.url_root + 'voice'
+        webhook = f"https://{public_url}/voice" if public_url else request.url_root.rstrip('/') + '/voice'
         
         call = client.calls.create(
             url=webhook,
-            to=GERALD_NUMBER,
-            from_=TERRENCE_NUMBER,
-            status_callback=webhook.replace('/voice', '/voice/end'),
-            status_callback_event=['completed']
+            to=phone,
+            from_=GERALD_NUMBER
         )
+        
+        # Store callback message to be spoken first
+        active_calls[call.sid] = {"callback_message": message}
+        
         return jsonify({'success': True, 'call_sid': call.sid})
     except Exception as e:
-        print(f"Call error: {e}")
+        print(f"Callback error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route("/api/status")
 def status():
     return jsonify({
-        'agent': 'Terrence',
-        'platform': 'PC',
-        'mode': 'OpenClaw Subagent Bridge',
-        'active_calls': len(call_sessions),
-        'terrence_number': TERRENCE_NUMBER,
+        'agent': 'Gerald',
+        'platform': 'Mac',
         'gerald_number': GERALD_NUMBER,
-        'openclaw_url': OPENCLAW_URL,
-        'gerald_active': True
+        'terrence_number': TERRENCE_NUMBER,
+        'openclaw_connected': bool(OPENCLAW_URL),
+        'active_conversations': len(conversations)
     })
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    print(f"Terrence - OpenClaw Bridge Voice AI on port {port}")
-    print(f"OpenClaw Gateway: {OPENCLAW_URL}")
-    app.run(host='0.0.0.0', port=port, debug=True)
+    port = int(os.environ.get('PORT', 5001))
+    print(f"Gerald - Secure Voice Bridge on port {port}")
+    print(f"OpenClaw URL: {OPENCLAW_URL or 'Not configured'}")
+    app.run(host='0.0.0.0', port=port)
