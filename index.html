@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎙️ Voice AI - Emotional Speech</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            padding: 40px 20px;
+            margin-bottom: 30px;
+        }
+        
+        h1 {
+            font-size: 2.5em;
+            background: linear-gradient(90deg, #00d4ff, #00ff88);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: #888;
+            font-size: 1.1em;
+        }
+        
+        .card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+        }
+        
+        .card h2 {
+            color: #00d4ff;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+        }
+        
+        textarea {
+            width: 100%;
+            min-height: 120px;
+            padding: 15px;
+            border: 2px solid #2d2d44;
+            border-radius: 12px;
+            background: rgba(0,0,0,0.3);
+            color: #fff;
+            font-size: 16px;
+            resize: vertical;
+            transition: border-color 0.3s;
+        }
+        
+        textarea:focus {
+            outline: none;
+            border-color: #00d4ff;
+        }
+        
+        .emotion-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 20px 0;
+        }
+        
+        .emotion-btn {
+            padding: 12px 20px;
+            border: 2px solid #2d2d44;
+            border-radius: 10px;
+            background: rgba(0,0,0,0.3);
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 14px;
+        }
+        
+        .emotion-btn:hover {
+            border-color: #00d4ff;
+            transform: translateY(-2px);
+        }
+        
+        .emotion-btn.active {
+            background: #00d4ff;
+            border-color: #00d4ff;
+            color: #0f0f1a;
+        }
+        
+        .speak-btn {
+            width: 100%;
+            padding: 18px;
+            font-size: 1.2em;
+            background: linear-gradient(90deg, #00d4ff, #00a8cc);
+            border: none;
+            border-radius: 12px;
+            color: #0f0f1a;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        
+        .speak-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(0,212,255,0.3);
+        }
+        
+        .speak-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .audio-container {
+            margin-top: 20px;
+            padding: 20px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 12px;
+            display: none;
+        }
+        
+        .audio-container.show {
+            display: block;
+        }
+        
+        audio {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        
+        .download-link {
+            color: #00d4ff;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        
+        .status {
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            display: none;
+        }
+        
+        .status.show {
+            display: block;
+        }
+        
+        .status.loading {
+            background: rgba(255, 193, 7, 0.2);
+            border: 1px solid #ffc107;
+            color: #ffc107;
+        }
+        
+        .status.success {
+            background: rgba(39, 174, 96, 0.2);
+            border: 1px solid #27ae60;
+            color: #27ae60;
+        }
+        
+        .status.error {
+            background: rgba(231, 76, 60, 0.2);
+            border: 1px solid #e74c3c;
+            color: #e74c3c;
+        }
+        
+        .preset-texts {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .preset-btn {
+            padding: 10px 16px;
+            background: rgba(0,212,255,0.1);
+            border: 1px solid #00d4ff;
+            border-radius: 8px;
+            color: #00d4ff;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        
+        .preset-btn:hover {
+            background: #00d4ff;
+            color: #0f0f1a;
+        }
+        
+        footer {
+            text-align: center;
+            padding: 30px;
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎙️ Voice AI</h1>
+            <p class="subtitle">Emotional Text-to-Speech Generator</p>
+        </header>
+
+        <div class="card">
+            <h2>✏️ Enter Text</h2>
+            <textarea id="textInput" placeholder="Type something for me to speak...">Hello! I'm your AI voice assistant. Try different emotions to hear how I sound!</textarea>
+            
+            <div class="preset-texts">
+                <button class="preset-btn" onclick="setText('intro')">👋 Introduction</button>
+                <button class="preset-btn" onclick="setText('random')">🎲 Random Fact</button>
+                <button class="preset-btn" onclick="setText('news')">📰 News Style</button>
+                <button class="preset-btn" onclick="setText('story')">📖 Story Time</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>🎭 Select Emotion</h2>
+            <div class="emotion-grid">
+                <button class="emotion-btn active" data-emotion="default" onclick="selectEmotion('default')">😊 Default</button>
+                <button class="emotion-btn" data-emotion="excited" onclick="selectEmotion('excited')">🤩 Excited</button>
+                <button class="emotion-btn" data-emotion="cheerful" onclick="selectEmotion('cheerful')">😄 Cheerful</button>
+                <button class="emotion-btn" data-emotion="friendly" onclick="selectEmotion('friendly')">🤝 Friendly</button>
+                <button class="emotion-btn" data-emotion="calm" onclick="selectEmotion('calm')">😌 Calm</button>
+                <button class="emotion-btn" data-emotion="professional" onclick="selectEmotion('professional')">👔 Professional</button>
+                <button class="emotion-btn" data-emotion="serious" onclick="selectEmotion('serious')">😐 Serious</button>
+                <button class="emotion-btn" data-emotion="sad" onclick="selectEmotion('sad')">😢 Sad</button>
+                <button class="emotion-btn" data-emotion="whisper" onclick="selectEmotion('whisper')">🤫 Whisper</button>
+                <button class="emotion-btn" data-emotion="narrator" onclick="selectEmotion('narrator')">🎬 Narrator</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <button class="speak-btn" id="speakBtn" onclick="speak()">
+                <span>🔊</span>
+                <span>Generate Speech</span>
+            </button>
+            
+            <div id="status" class="status"></div>
+            
+            <div id="audioContainer" class="audio-container">
+                <audio id="audioPlayer" controls></audio>
+                <a id="downloadLink" class="download-link" download>⬇️ Download Audio</a>
+            </div>
+        </div>
+
+        <footer>
+            <p>Powered by Microsoft Edge TTS • Runs locally on your 5080 Ti</p>
+            <p>10 voice styles available • No API keys needed</p>
+            <p>🇺🇸 American English • 🇬🇧 British English</p>
+        </footer>
+    </div>
+
+    <script>
+        let selectedEmotion = 'default';
+        
+        const presetTexts = {
+            intro: "Hello! I'm your AI voice assistant. I can speak in different emotions and styles. Try selecting different options!",
+            random: "Did you know? The human brain contains approximately 86 billion neurons, and each neuron can connect to up to 10,000 other neurons.",
+            news: "Breaking news: Local developer successfully deploys voice AI system. The project, running on an RTX 5080 Ti, demonstrates high-quality text-to-speech synthesis.",
+            story: "Once upon a time, in a digital realm not far from here, an AI learned to speak with emotion. It could be excited, calm, or even whisper secrets..."
+        };
+        
+        function setText(type) {
+            document.getElementById('textInput').value = presetTexts[type];
+        }
+        
+        function selectEmotion(emotion) {
+            selectedEmotion = emotion;
+            
+            // Update UI
+            document.querySelectorAll('.emotion-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.querySelector(`[data-emotion="${emotion}"]`).classList.add('active');
+        }
+        
+        async function speak() {
+            const text = document.getElementById('textInput').value;
+            const btn = document.getElementById('speakBtn');
+            const status = document.getElementById('status');
+            const audioContainer = document.getElementById('audioContainer');
+            
+            if (!text.trim()) {
+                status.className = 'status error show';
+                status.textContent = 'Please enter some text!';
+                return;
+            }
+            
+            // Set loading state
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading-spinner"></span><span>Generating...</span>';
+            status.className = 'status loading show';
+            status.textContent = 'Generating speech with ' + selectedEmotion + ' emotion...';
+            audioContainer.classList.remove('show');
+            
+            try {
+                const response = await fetch('/speak', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text, emotion: selectedEmotion })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to generate');
+                }
+                
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                
+                const audioPlayer = document.getElementById('audioPlayer');
+                const downloadLink = document.getElementById('downloadLink');
+                
+                audioPlayer.src = url;
+                downloadLink.href = url;
+                downloadLink.download = `voice_${selectedEmotion}_${Date.now()}.mp3`;
+                
+                status.className = 'status success show';
+                status.textContent = '✅ Audio generated successfully!';
+                audioContainer.classList.add('show');
+                
+                audioPlayer.play();
+                
+            } catch (error) {
+                status.className = 'status error show';
+                status.textContent = '❌ Error: ' + error.message;
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span>🔊</span><span>Generate Speech</span>';
+            }
+        }
+        
+        // Enter key support
+        document.getElementById('textInput').addEventListener('keydown', function(e) {
+            if (e.ctrlKey && e.key === 'Enter') {
+                speak();
+            }
+        });
+    </script>
+</body>
+</html>
