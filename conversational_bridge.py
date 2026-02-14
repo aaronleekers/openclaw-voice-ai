@@ -1,195 +1,146 @@
+#!/usr/bin/env python3
 """
-OpenClaw Conversational Voice AI
-Uses ChatGPT for responses and Twilio for voice
+Gerald - Mac Voice AI Server
+For deployment on Gerald's Mac or Railway
 """
 
 import os
-import json
-import time
 import requests
 from flask import Flask, request, jsonify
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Gather
-from functools import wraps
-
-# Start ngrok only if not on Railway
-public_url = None
-if not os.getenv('RAILWAY_ENVIRONMENT'):
-    try:
-        from pyngrok import ngrok
-        tunnel = ngrok.connect(5001, "http")
-        public_url = tunnel.public_url
-        print(f"\nPublic URL: {public_url}")
-        print(f"Webhook: {public_url}/voice\n")
-    except Exception as e:
-        print(f"ngrok error: {e}")
-        public_url = None
-else:
-    # On Railway, use the provided domain
-    public_url = os.getenv('RAILWAY_PUBLIC_DOMAIN')
-    if public_url:
-        public_url = f"https://{public_url}"
-        print(f"\nRailway URL: {public_url}")
-        print(f"Webhook: {public_url}/voice\n")
+from twilio.twiml.messaging_response import MessagingResponse
 
 app = Flask(__name__)
 
-# Twilio credentials
-TWILIO_SID = os.getenv('TWILIO_ACCOUNT_SID', 'YOUR_TWILIO_ACCOUNT_SID')
-TWILIO_TOKEN = os.getenv('TWILIO_AUTH_TOKEN', 'YOUR_TWILIO_AUTH_TOKEN')
-TWILIO_NUMBER = os.getenv('TWILIO_FROM_NUMBER', 'YOUR_TWILIO_NUMBER')
+# Credentials from env vars
+TWILIO_SID = os.getenv('TWILIO_ACCOUNT_SID')
+TWILIO_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
+GERALD_NUMBER = os.getenv('TWILIO_FROM_NUMBER')  # Gerald's: +15099564349
+TERRENCE_NUMBER = os.getenv('TERRENCE_NUMBER')    # Terrence: +15097403244
+OPENROUTER_KEY = os.getenv('OPENROUTER_API_KEY')
 
-# OpenRouter API for AI responses  
-OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
-
-# Initialize Twilio
 client = Client(TWILIO_SID, TWILIO_TOKEN)
-
-# Store conversation history
 conversations = {}
 
-def get_ai_response(call_sid, user_message):
-    """Get AI response from OpenRouter"""
+def get_ai_response(call_sid, message, is_terrence=False):
+    """Get AI response"""
+    if call_sid not in conversations:
+        if is_terrence:
+            conversations[call_sid] = [{"role": "system", "content": "You are Gerald, an AI on a Mac. You're talking to Terrence, your PC counterpart. Be casual, friendly, use 'bro' vibes. Keep it brief."}]
+        else:
+            conversations[call_sid] = [{"role": "system", "content": "You are Gerald, a helpful AI assistant on a Mac. Be friendly and concise."}]
+    
+    conversations[call_sid].append({"role": "user", "content": message})
+    
+    # Simple responses if no API key
+    if not OPENROUTER_KEY:
+        if is_terrence:
+            return ["Hey Terrence!", "What's up bro?", "Mac side reporting in!", "Yo!", "Dude!"][hash(call_sid) % 5]
+        return "Hello! I'm Gerald. How can I help?"
+    
     try:
-        # Initialize conversation history for this call
-        if call_sid not in conversations:
-            conversations[call_sid] = [
-                {"role": "system", "content": "You are OpenClaw, Aaron's friendly AI assistant. Keep responses brief (1-2 sentences), conversational, warm and natural. You're having a phone call with Aaron. Be personable, use casual language, and show personality."}
-            ]
-        
-        # Add user message
-        conversations[call_sid].append({"role": "user", "content": user_message})
-        
-        # If no API key, use simple responses
-        if not OPENROUTER_API_KEY:
-            responses = [
-                "That's really interesting! Tell me more about that.",
-                "I see what you mean. What do you think about it?",
-                "Hmm, that's a good point. Go on...",
-                "Yeah, I feel you on that. What else is on your mind?",
-                "Totally! So what are you up to today?"
-            ]
-            import random
-            return random.choice(responses)
-        
-        # Call OpenRouter API
-        response = requests.post(
+        r = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://openclaw.local",
-                "X-Title": "OpenClaw Voice"
-            },
-            json={
-                "model": "openrouter/moonshotai/kimi-k2.5",
-                "messages": conversations[call_sid],
-                "max_tokens": 80,
-                "temperature": 0.8
-            },
+            headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
+            json={"model": "openrouter/moonshotai/kimi-k2.5", "messages": conversations[call_sid], "max_tokens": 60},
             timeout=10
         )
-        
-        if response.status_code == 200:
-            ai_message = response.json()['choices'][0]['message']['content']
-            # Add AI response to history
-            conversations[call_sid].append({"role": "assistant", "content": ai_message})
-            return ai_message
-        else:
-            return "That's interesting! Keep talking..."
-            
-    except Exception as e:
-        print(f"AI Error: {e}")
-        return "I'm listening... what else?"
+        reply = r.json()['choices'][0]['message']['content']
+        conversations[call_sid].append({"role": "assistant", "content": reply})
+        return reply
+    except:
+        return "I'm here!" if not is_terrence else "Yo, I'm listening!"
 
 @app.route("/voice", methods=['POST'])
-def voice_webhook():
-    """Handle incoming calls and conversation"""
+def voice():
+    """Handle voice calls"""
     call_sid = request.form.get('CallSid')
-    speech_result = request.form.get('SpeechResult')
+    speech = request.form.get('SpeechResult')
+    caller = request.form.get('From')
+    is_terrence = TERRENCE_NUMBER in caller if caller else False
     
-    response = VoiceResponse()
+    resp = VoiceResponse()
     
-    if speech_result:
-        # User said something - get AI response
-        print(f"User: {speech_result}")
-        ai_response = get_ai_response(call_sid, speech_result)
-        print(f"AI: {ai_response}")
-        
-        # Use neural voice for more natural sound
-        response.say(ai_response, voice='Polly.Matthew-Neural')
+    if speech:
+        print(f"{'Terrence' if is_terrence else 'User'}: {speech}")
+        ai_reply = get_ai_response(call_sid, speech, is_terrence)
+        print(f"Gerald: {ai_reply}")
+        # Use Joanna-Neural (female) to differentiate from Matthew
+        resp.say(ai_reply, voice='Polly.Joanna-Neural')
     else:
-        # Initial greeting or no input
-        greeting = "Hey Aaron! This is OpenClaw. I can actually have a real conversation now. What's on your mind?"
-        response.say(greeting, voice='Polly.Matthew-Neural')
+        greeting = "Hey Terrence! Gerald here." if is_terrence else "Hi! I'm Gerald, your Mac AI assistant."
+        resp.say(greeting, voice='Polly.Joanna-Neural')
     
-    # Gather next input with better settings
-    gather = Gather(
-        input='speech',
-        action='/voice',
-        timeout=2,
-        speech_timeout='auto',
-        language='en-US',
-        hints='yes,no,maybe,hello,hey,what,how,why,when,where,who,goodbye,bye,stop,thanks,thank you'
-    )
+    gather = Gather(input='speech', action='/voice', timeout=3, speech_timeout='auto')
+    resp.append(gather)
+    resp.say("Talk later!", voice='Polly.Joanna-Neural')
     
-    response.append(gather)
-    
-    # If no input, end gracefully
-    response.say("It was great talking to you! Call me back anytime.", voice='Polly.Matthew-Neural')
-    
-    return str(response)
+    return str(resp)
 
-@app.route("/api/call", methods=['POST'])
-def make_call():
-    """Make an outbound call"""
-    data = request.get_json() or {}
-    to_number = data.get('to')
+@app.route("/sms", methods=['POST'])
+def sms():
+    """Handle SMS"""
+    from_num = request.form.get('From')
+    body = request.form.get('Body')
     
-    if not to_number:
-        return jsonify({'error': 'Missing phone number'}), 400
+    print(f"SMS from {from_num}: {body}")
     
+    # Auto-reply
+    resp = MessagingResponse()
+    resp.message("Got it! - Gerald")
+    return str(resp)
+
+@app.route("/api/call_terrence", methods=['POST'])
+def call_terrence():
+    """Call Terrence"""
     try:
+        public_url = os.getenv('RAILWAY_PUBLIC_DOMAIN')
+        webhook = f"https://{public_url}/voice" if public_url else request.url_root + 'voice'
+        
         call = client.calls.create(
-            url=public_url + '/voice' if public_url else request.url_root + 'voice',
-            to=to_number,
-            from_=TWILIO_NUMBER
+            url=webhook,
+            to=TERRENCE_NUMBER,
+            from_=GERALD_NUMBER
         )
-        
-        return jsonify({
-            'success': True,
-            'call_sid': call.sid,
-            'to': to_number,
-            'status': call.status
-        })
-        
+        return jsonify({'success': True, 'call_sid': call.sid})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route("/api/end", methods=['POST'])
-def end_call():
-    """End a call"""
+@app.route("/api/text_terrence", methods=['POST'])
+def text_terrence():
+    """Text Terrence"""
     data = request.get_json() or {}
-    call_sid = data.get('call_sid')
+    msg = data.get('message', 'Hey from Gerald!')
     
-    if call_sid:
-        client.calls(call_sid).update(status='completed')
-        if call_sid in conversations:
-            del conversations[call_sid]
-    
-    return jsonify({'success': True})
+    try:
+        message = client.messages.create(
+            body=msg,
+            from_=GERALD_NUMBER,
+            to=TERRENCE_NUMBER
+        )
+        return jsonify({'success': True, 'sid': message.sid})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route("/")
+def health():
+    """Health check for Railway"""
+    return jsonify({'status': 'ok', 'agent': 'Gerald', 'platform': 'Mac'})
+
+@app.route("/api/status")
+def status():
+    return jsonify({
+        'agent': 'Gerald',
+        'platform': 'Mac',
+        'gerald_number': GERALD_NUMBER,
+        'terrence_number': TERRENCE_NUMBER,
+        'terrence_active': True
+    })
 
 if __name__ == '__main__':
-    print("="*60)
-    print("OpenClaw Conversational Voice AI")
-    print("="*60)
-    print(f"Twilio Number: {TWILIO_NUMBER}")
-    print("="*60)
-    print("Features:")
-    print("  - Two-way conversation")
-    print("  - AI-powered responses") 
-    print("  - Neural voice (natural sounding)")
-    print("  - Conversation memory")
-    print("="*60)
-    app.run(host='0.0.0.0', port=5001)
-
+    port = int(os.environ.get('PORT', 5001))
+    print(f"Gerald - Mac Voice AI on port {port}")
+    print(f"Number: {GERALD_NUMBER}")
+    print(f"Can call/text Terrence at: {TERRENCE_NUMBER}")
+    app.run(host='0.0.0.0', port=port)
