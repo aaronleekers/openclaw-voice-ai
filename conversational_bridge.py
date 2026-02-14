@@ -123,6 +123,11 @@ def text_terrence():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route("/")
+def health():
+    """Health check for Railway"""
+    return jsonify({'status': 'ok', 'agent': 'Gerald', 'platform': 'Mac'})
+
 @app.route("/api/status")
 def status():
     return jsonify({
